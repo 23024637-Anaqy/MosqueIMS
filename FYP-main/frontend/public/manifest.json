@@ -1,0 +1,28 @@
+{
+  "short_name": "Quantix",
+  "name": "Quantix - Inventory Management System",
+  "icons": [
+    {
+      "src": "FYPLOGO_1.png",
+      "sizes": "64x64 32x32 24x24 16x16",
+      "type": "image/png"
+    },
+    {
+      "src": "FYPLOGO_1.png",
+      "type": "image/png",
+      "sizes": "192x192"
+    },
+    {
+      "src": "FYPLOGO_1.png",
+      "type": "image/png",
+      "sizes": "512x512"
+    }
+  ],
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#312F56",
+  "background_color": "#f1f1f1",
+  "description": "Professional inventory management system for businesses",
+  "orientation": "portrait-primary",
+  "categories": ["business", "productivity", "utilities"]
+}
