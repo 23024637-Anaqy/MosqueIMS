@@ -1,16 +1,11 @@
 const Inventory = require('../models/inventoryModel');
-const mongoose = require('mongoose');
 
-// GET all inventory items (shared among all users - from products collection)
+// GET all inventory items (shared among all users - from products table)
 const getInventories = async (req, res) => {
   try {
     console.log('Fetching products from database...');
     
-    // Let's also check the collection name and any existing data
-    const collectionName = Inventory.collection.name;
-    console.log('Collection name:', collectionName);
-    
-    const inventory = await Inventory.find({}).sort({ createdAt: -1 });
+    const inventory = await Inventory.findAll();
     console.log('Found', inventory.length, 'products');
     
     // Log first item to see structure
@@ -31,7 +26,7 @@ const getInventory = async (req, res) => {
   try {
     const { id } = req.params;
     
-    if (!mongoose.Types.ObjectId.isValid(id)) {
+    if (!id || isNaN(id)) {
       return res.status(400).json({ error: 'Invalid product ID' });
     }
     
@@ -49,8 +44,13 @@ const getInventory = async (req, res) => {
 };
 
 
-// CREATE a new inventory item in products collection
+// CREATE a new inventory item in products table (Admin only)
 const createInventory = async (req, res) => {
+  // Check if user is admin
+  if (req.user.role !== 'admin') {
+    return res.status(403).json({ error: 'Only admins can add new inventory items' });
+  }
+
   const { name, sku, type, description, rate, quantity } = req.body;
   let emptyFields = [];
 
@@ -65,7 +65,7 @@ const createInventory = async (req, res) => {
   }
 
   try {
-    const user_id = req.user._id;
+    const user_id = req.user.id;
     const inventory = await Inventory.create({
       name,
       sku,
@@ -83,16 +83,21 @@ const createInventory = async (req, res) => {
   }
 };
 
-// DELETE an inventory item
+// DELETE an inventory item (Admin only)
 const deleteInventory = async (req, res) => {
   const { id } = req.params;
 
-  if (!mongoose.Types.ObjectId.isValid(id)) {
+  // Check if user is admin
+  if (req.user.role !== 'admin') {
+    return res.status(403).json({ error: 'Only admins can delete inventory items' });
+  }
+
+  if (!id || isNaN(id)) {
     return res.status(400).json({ error: 'No such inventory item' });
   }
 
   try {
-    const inventory = await Inventory.findOneAndDelete({ _id: id });
+    const inventory = await Inventory.delete(id);
     if (!inventory) {
       return res.status(400).json({ error: 'Inventory item not found' });
     }
@@ -106,7 +111,7 @@ const deleteInventory = async (req, res) => {
 const updateInventory = async (req, res) => {
   const { id } = req.params;
 
-  if (!mongoose.Types.ObjectId.isValid(id)) {
+  if (!id || isNaN(id)) {
     return res.status(400).json({ error: 'No such inventory item' });
   }
 
@@ -117,16 +122,57 @@ const updateInventory = async (req, res) => {
       return res.status(400).json({ error: 'Inventory item not found' });
     }
 
-    // Merge existing user_id with req.body so user_id is not lost
-    const updatedData = { ...req.body, user_id: existingInventory.user_id };
+    const userRole = req.user.role;
 
-    const inventory = await Inventory.findOneAndUpdate(
-      { _id: id },
-      updatedData,
-      { new: true, runValidators: true }
-    );
+    // Admin can edit everything
+    if (userRole === 'admin') {
+      // Merge existing user_id with req.body so user_id is not lost
+      const updatedData = { ...req.body, user_id: existingInventory.user_id };
 
-    res.status(200).json(inventory);
+      const inventory = await Inventory.update(id, updatedData);
+
+      return res.status(200).json(inventory);
+    }
+
+    // Staff restrictions
+    if (userRole === 'staff') {
+      // Check if item was created today (before midnight)
+      const itemCreatedDate = new Date(existingInventory.created_at);
+      const now = new Date();
+      
+      // Set both dates to midnight to compare just the day
+      const itemCreatedDay = new Date(itemCreatedDate.getFullYear(), itemCreatedDate.getMonth(), itemCreatedDate.getDate());
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      
+      // If item was not created today, staff cannot edit
+      if (itemCreatedDay.getTime() !== today.getTime()) {
+        return res.status(403).json({ 
+          error: 'Staff can only edit items on the same day they were created' 
+        });
+      }
+
+      // Staff can only edit quantity
+      const allowedFields = ['quantity'];
+      const requestedFields = Object.keys(req.body);
+      
+      const unauthorizedFields = requestedFields.filter(field => !allowedFields.includes(field));
+      
+      if (unauthorizedFields.length > 0) {
+        return res.status(403).json({ 
+          error: 'Staff can only edit the quantity field',
+          unauthorizedFields 
+        });
+      }
+
+      // Update only quantity
+      const inventory = await Inventory.update(id, { quantity: req.body.quantity });
+
+      return res.status(200).json(inventory);
+    }
+
+    // If role is neither admin nor staff
+    return res.status(403).json({ error: 'Unauthorized role' });
+    
   } catch (error) {
     res.status(400).json({ error: error.message });
   }

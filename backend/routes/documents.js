@@ -22,11 +22,11 @@ router.get('/', getDocuments);
 // GET /api/documents/stats - Get document statistics
 router.get('/stats', getDocumentStats);
 
+// GET /api/documents/:id/download - Download document file (must be before /:id)
+router.get('/:id/download', downloadDocument);
+
 // GET /api/documents/:id - Get specific document
 router.get('/:id', getDocument);
-
-// GET /api/documents/:id/download - Download document file
-router.get('/:id/download', downloadDocument);
 
 // POST /api/documents - Save new document
 router.post('/', saveDocument);

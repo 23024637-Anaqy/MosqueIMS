@@ -1,9 +1,6 @@
 const Inventory = require('../models/inventoryModel');
-const Sale = require('../models/saleModel');
-const PurchaseOrder = require('../models/purchaseOrderModel');
-const ReceivingReceipt = require('../models/receivingReceiptModel');
 const User = require('../models/userModel');
-const mongoose = require('mongoose');
+const { query: dbQuery } = require('../db');
 
 // Get Admin Dashboard Data
 const getAdminDashboardData = async (req, res) => {
@@ -11,115 +8,64 @@ const getAdminDashboardData = async (req, res) => {
     // Get current date and calculate date ranges
     const today = new Date();
     const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-    const startOfYesterday = new Date(startOfToday.getTime() - 24 * 60 * 60 * 1000);
     const startOfThisMonth = new Date(today.getFullYear(), today.getMonth(), 1);
-    const startOfLastMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1);
-    const endOfLastMonth = new Date(today.getFullYear(), today.getMonth(), 0);
-
-    // Sales Activity
-    const [todaySales, yesterdaySales, thisMonthSales, lastMonthSales] = await Promise.all([
-      Sale.aggregate([
-        { $match: { orderDate: { $gte: startOfToday } } },
-        { $group: { _id: null, total: { $sum: '$total' } } }
-      ]),
-      Sale.aggregate([
-        { $match: { orderDate: { $gte: startOfYesterday, $lt: startOfToday } } },
-        { $group: { _id: null, total: { $sum: '$total' } } }
-      ]),
-      Sale.aggregate([
-        { $match: { orderDate: { $gte: startOfThisMonth } } },
-        { $group: { _id: null, total: { $sum: '$total' } } }
-      ]),
-      Sale.aggregate([
-        { $match: { orderDate: { $gte: startOfLastMonth, $lt: startOfThisMonth } } },
-        { $group: { _id: null, total: { $sum: '$total' } } }
-      ])
-    ]);
 
     // Inventory Statistics
-    const [totalProducts, lowStockItems, outOfStockItems, totalInventoryValue] = await Promise.all([
-      Inventory.countDocuments(),
-      Inventory.countDocuments({ quantity: { $lt: 20, $gt: 0 } }), // Low stock threshold
-      Inventory.countDocuments({ quantity: 0 }),
-      Inventory.aggregate([
-        { $group: { _id: null, total: { $sum: { $multiply: ['$quantity', '$rate'] } } } }
-      ])
+    const [totalProductsRes, lowStockRes, outOfStockRes, totalValueRes] = await Promise.all([
+      dbQuery('SELECT COUNT(*) FROM products'),
+      dbQuery('SELECT COUNT(*) FROM products WHERE quantity < 20 AND quantity > 0'),
+      dbQuery('SELECT COUNT(*) FROM products WHERE quantity = 0'),
+      dbQuery('SELECT SUM(quantity * rate) as total FROM products WHERE rate IS NOT NULL')
     ]);
 
     // Recent Products (last 10 added)
-    const recentProducts = await Inventory.find()
-      .sort({ createdAt: -1 })
-      .limit(10)
-      .select('name sku quantity rate createdAt');
+    const recentProductsRes = await dbQuery(
+      'SELECT id, name, sku, quantity, rate, created_at FROM products ORDER BY created_at DESC LIMIT 10'
+    );
 
-    // Purchase Order Statistics
-    const [totalPOs, pendingPOs, completedPOs] = await Promise.all([
-      PurchaseOrder.countDocuments(),
-      PurchaseOrder.countDocuments({ status: { $in: ['Draft', 'Sent', 'Acknowledged'] } }),
-      PurchaseOrder.countDocuments({ status: 'Received' })
-    ]);
+    // Products added today
+    const todayProductsRes = await dbQuery(
+      'SELECT COUNT(*) FROM products WHERE created_at >= $1',
+      [startOfToday]
+    );
 
-    // Recent Sales (last 10)
-    const recentSales = await Sale.find()
-      .sort({ orderDate: -1 })
-      .limit(10)
-      .select('orderDate customerName total status items');
+    // Products added this month
+    const thisMonthProductsRes = await dbQuery(
+      'SELECT COUNT(*) FROM products WHERE created_at >= $1',
+      [startOfThisMonth]
+    );
 
     // User Statistics
-    const [totalUsers, adminUsers, staffUsers] = await Promise.all([
-      User.countDocuments(),
-      User.countDocuments({ role: 'admin' }),
-      User.countDocuments({ role: 'staff' })
+    const [totalUsersRes, adminUsersRes, staffUsersRes] = await Promise.all([
+      dbQuery('SELECT COUNT(*) FROM users'),
+      dbQuery('SELECT COUNT(*) FROM users WHERE role = $1', ['admin']),
+      dbQuery('SELECT COUNT(*) FROM users WHERE role = $1', ['staff'])
     ]);
 
-    // Recent Receiving Receipts
-    const recentReceivingReceipts = await ReceivingReceipt.find()
-      .populate('purchaseOrderId', 'poNumber vendorName')
-      .sort({ receivedAt: -1 })
-      .limit(5)
-      .select('receiptNumber receivedAt status items');
-
-    // Top Selling Products (this month)
-    const topProducts = await Sale.aggregate([
-      { $match: { orderDate: { $gte: startOfThisMonth } } },
-      { $unwind: '$items' },
-      { $group: { 
-        _id: '$items.productName', 
-        totalQuantity: { $sum: '$items.quantity' },
-        totalRevenue: { $sum: { $multiply: ['$items.quantity', '$items.unitPrice'] } }
-      }},
-      { $sort: { totalQuantity: -1 } },
-      { $limit: 5 }
-    ]);
+    // Top items by quantity
+    const topItemsRes = await dbQuery(
+      'SELECT id, name, type, quantity, rate FROM products ORDER BY quantity DESC LIMIT 5'
+    );
 
     // Format the response
     const dashboardData = {
-      salesActivity: {
-        todaySales: todaySales[0]?.total || 0,
-        yesterdaySales: yesterdaySales[0]?.total || 0,
-        thisMonth: thisMonthSales[0]?.total || 0,
-        lastMonth: lastMonthSales[0]?.total || 0
+      activityStats: {
+        itemsAddedToday: parseInt(todayProductsRes.rows[0].count) || 0,
+        itemsAddedThisMonth: parseInt(thisMonthProductsRes.rows[0].count) || 0
       },
       inventoryStats: {
-        totalProducts: totalProducts || 0,
-        lowStock: lowStockItems || 0,
-        outOfStock: outOfStockItems || 0,
-        totalValue: totalInventoryValue[0]?.total || 0
-      },
-      purchaseStats: {
-        totalPOs: totalPOs || 0,
-        pendingPOs: pendingPOs || 0,
-        completedPOs: completedPOs || 0
+        totalProducts: parseInt(totalProductsRes.rows[0].count) || 0,
+        lowStock: parseInt(lowStockRes.rows[0].count) || 0,
+        outOfStock: parseInt(outOfStockRes.rows[0].count) || 0,
+        totalValue: parseFloat(totalValueRes.rows[0].total) || 0
       },
       userStats: {
-        totalUsers: totalUsers || 0,
-        adminUsers: adminUsers || 0,
-        staffUsers: staffUsers || 0
+        totalUsers: parseInt(totalUsersRes.rows[0].count) || 0,
+        adminUsers: parseInt(adminUsersRes.rows[0].count) || 0,
+        staffUsers: parseInt(staffUsersRes.rows[0].count) || 0
       },
-      recentProducts: recentProducts || [],
-      recentSales: recentSales || [],
-      recentReceivingReceipts: recentReceivingReceipts || [],
-      topProducts: topProducts || []
+      recentProducts: recentProductsRes.rows || [],
+      topItems: topItemsRes.rows || []
     };
 
     res.status(200).json({
@@ -142,56 +88,48 @@ const getStaffDashboardData = async (req, res) => {
     const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
     const startOfThisMonth = new Date(today.getFullYear(), today.getMonth(), 1);
 
-    // Sales Activity (limited for staff)
-    const [todaySales, thisMonthSales] = await Promise.all([
-      Sale.aggregate([
-        { $match: { orderDate: { $gte: startOfToday } } },
-        { $group: { _id: null, total: { $sum: '$total' } } }
-      ]),
-      Sale.aggregate([
-        { $match: { orderDate: { $gte: startOfThisMonth } } },
-        { $group: { _id: null, total: { $sum: '$total' } } }
-      ])
-    ]);
+    // Products added today
+    const todayProductsRes = await dbQuery(
+      'SELECT COUNT(*) FROM products WHERE created_at >= $1',
+      [startOfToday]
+    );
+
+    // Products added this month
+    const thisMonthProductsRes = await dbQuery(
+      'SELECT COUNT(*) FROM products WHERE created_at >= $1',
+      [startOfThisMonth]
+    );
 
     // Inventory Statistics (limited)
-    const [totalProducts, lowStockItems, outOfStockItems] = await Promise.all([
-      Inventory.countDocuments(),
-      Inventory.countDocuments({ quantity: { $lt: 20, $gt: 0 } }),
-      Inventory.countDocuments({ quantity: 0 })
+    const [totalProductsRes, lowStockRes, outOfStockRes] = await Promise.all([
+      dbQuery('SELECT COUNT(*) FROM products'),
+      dbQuery('SELECT COUNT(*) FROM products WHERE quantity < 20 AND quantity > 0'),
+      dbQuery('SELECT COUNT(*) FROM products WHERE quantity = 0')
     ]);
 
     // Recent Products (last 5)
-    const recentProducts = await Inventory.find()
-      .sort({ createdAt: -1 })
-      .limit(5)
-      .select('name sku quantity rate');
+    const recentProductsRes = await dbQuery(
+      'SELECT id, name, sku, quantity, rate FROM products ORDER BY created_at DESC LIMIT 5'
+    );
 
-    // Recent Sales (last 5)
-    const recentSales = await Sale.find()
-      .sort({ orderDate: -1 })
-      .limit(5)
-      .select('orderDate customerName total status');
-
-    // Purchase Orders assigned to this staff member
-    const myPOs = await PurchaseOrder.find({ createdBy: req.user._id })
-      .sort({ createdAt: -1 })
-      .limit(5)
-      .select('poNumber vendorName status total');
+    // Products created by this staff member
+    const myProductsRes = await dbQuery(
+      'SELECT id, name, sku, quantity, rate, created_at FROM products WHERE user_id = $1 ORDER BY created_at DESC LIMIT 5',
+      [req.user.id]
+    );
 
     const dashboardData = {
-      salesActivity: {
-        todaySales: todaySales[0]?.total || 0,
-        thisMonth: thisMonthSales[0]?.total || 0
+      activityStats: {
+        itemsAddedToday: parseInt(todayProductsRes.rows[0].count) || 0,
+        itemsAddedThisMonth: parseInt(thisMonthProductsRes.rows[0].count) || 0
       },
       inventoryStats: {
-        totalProducts: totalProducts || 0,
-        lowStock: lowStockItems || 0,
-        outOfStock: outOfStockItems || 0
+        totalProducts: parseInt(totalProductsRes.rows[0].count) || 0,
+        lowStock: parseInt(lowStockRes.rows[0].count) || 0,
+        outOfStock: parseInt(outOfStockRes.rows[0].count) || 0
       },
-      recentProducts: recentProducts || [],
-      recentSales: recentSales || [],
-      myPurchaseOrders: myPOs || []
+      recentProducts: recentProductsRes.rows || [],
+      myProducts: myProductsRes.rows || []
     };
 
     res.status(200).json({

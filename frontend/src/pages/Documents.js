@@ -553,20 +553,20 @@ const Documents = () => {
                     </td>
                     <td style={{ padding: '12px' }}>
                       <div style={{ fontSize: '14px', color: '#2d3748' }}>
-                        {doc.generatedBy.name}
+                        {(doc.generatedBy && doc.generatedBy.name) || doc.generated_by_name}
                       </div>
                     </td>
                     <td style={{ padding: '12px', fontSize: '14px', color: '#718096' }}>
-                      {formatDate(doc.createdAt)}
+                      {formatDate(doc.created_at || doc.createdAt)}
                     </td>
                     <td style={{ padding: '12px', fontSize: '14px', color: '#718096' }}>
-                      {formatFileSize(doc.fileSize)}
+                      {formatFileSize(doc.file_size || doc.fileSize)}
                     </td>
                     <td style={{ padding: '12px' }}>
                       <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
                         {/* Download Button */}
                         <button
-                          onClick={() => downloadDocument(doc._id, doc.fileName)}
+                          onClick={() => downloadDocument(doc.id || doc._id, doc.file_name || doc.fileName)}
                           style={{
                             background: '#4299e1',
                             color: 'white',
@@ -583,7 +583,7 @@ const Documents = () => {
 
                         {/* Archive Button */}
                         <button
-                          onClick={() => toggleArchive(doc._id)}
+                          onClick={() => toggleArchive(doc.id || doc._id)}
                           style={{
                             background: '#ed8936',
                             color: 'white',
@@ -601,7 +601,7 @@ const Documents = () => {
                         {/* Delete Button (Admin Only) */}
                         {user.role === 'admin' && (
                           <button
-                            onClick={() => deleteDocument(doc._id)}
+                            onClick={() => deleteDocument(doc.id || doc._id)}
                             style={{
                               background: '#e53e3e',
                               color: 'white',

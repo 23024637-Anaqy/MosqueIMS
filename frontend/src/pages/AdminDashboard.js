@@ -30,7 +30,8 @@ const AdminDashboard = () => {
       if (!response.ok) {
         setError(data.error || 'Failed to fetch dashboard data');
       } else {
-        setDashboardData(data.summary || data);
+        console.log('Dashboard data received:', data.data);
+        setDashboardData(data.data);
         setError(null);
       }
     } catch (err) {
@@ -88,7 +89,7 @@ const AdminDashboard = () => {
         }}>
           <div style={{ fontSize: '14px', color: '#6b7280', marginBottom: '8px' }}>Total Inventory Items</div>
           <div style={{ fontSize: '32px', fontWeight: '700', color: '#065f46' }}>
-            {dashboardData?.totalItems || 0}
+            {dashboardData?.inventoryStats?.totalProducts || 0}
           </div>
           <div style={{ fontSize: '12px', color: '#9ca3af', marginTop: '8px' }}>📦 Items in stock</div>
         </div>
@@ -128,7 +129,7 @@ const AdminDashboard = () => {
                 </tr>
               </thead>
               <tbody>
-                {dashboardData.recentItems.map(item => (
+                {dashboardData.recentProducts.map(item => (
                   <tr key={item.id} style={{ borderBottom: '1px solid #e5e7eb' }}>
                     <td style={{ padding: '12px', color: '#1f2937' }}>{item.name}</td>
                     <td style={{ padding: '12px', color: '#6b7280' }}>{item.type}</td>
@@ -139,7 +140,7 @@ const AdminDashboard = () => {
             </table>
           </div>
         </div>
-      )}
+      )} 
 
       {/* Recent Documents Section */}
       {dashboardData?.recentDocuments && dashboardData.recentDocuments.length > 0 && (

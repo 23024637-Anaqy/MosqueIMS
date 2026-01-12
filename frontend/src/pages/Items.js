@@ -15,7 +15,18 @@ const Item = () => {
   const [sortOrder, setSortOrder] = useState('asc');
   const [showOptionsDropdown, setShowOptionsDropdown] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [editingItem, setEditingItem] = useState(null);
+  const [editForm, setEditForm] = useState({
+    name: '',
+    sku: '',
+    type: '',
+    description: '',
+    rate: '',
+    quantity: ''
+  });
+  const [editError, setEditError] = useState(null);
 
+  // Fetch inventory on component mount
   useEffect(() => {
     const fetchInventory = async () => {
       if (!user) {
@@ -26,32 +37,27 @@ const Item = () => {
       }
 
       try {
-        console.log('Fetching inventory items, user token:', user.token);
-        const response = await fetchWithAuth('/api/inventory');
+        // Try DB-style route first
+        let res = await fetchWithAuth('/api/inventory/items');
+        
+        // If not ok, try prototype-style route
+        if (!res.ok) {
+          res = await fetchWithAuth('/api/inventory');
+        }
 
-        console.log('Inventory response status:', response.status);
-        const data = await response.json();
-        console.log('Raw inventory data:', data);
-
-        if (!response.ok) {
-          setError(data.error || 'Failed to fetch inventory.');
-          setItems([]);
-        } else {
-          // Handle both direct array and {items: []} response, normalize ids
-          const itemsArray = Array.isArray(data) ? data : (data.items || []);
-          const normalized = itemsArray.map((item) => ({
-            ...item,
-            id: item.id || item._id,
-            _id: item._id || item.id,
-          }));
-          console.log('Items array:', normalized);
-          setItems(normalized);
+        if (res.ok) {
+          const data = await res.json();
+          const itemsArray = data.items || data || [];
+          setItems(itemsArray);
           setError(null);
+        } else {
+          setItems([]);
+          setError(`Failed to load inventory (status ${res.status})`);
         }
       } catch (err) {
         console.error('Fetch error:', err);
-        setError('Something went wrong while fetching inventory.');
         setItems([]);
+        setError('Failed to load inventory');
       } finally {
         setLoading(false);
       }
@@ -64,6 +70,119 @@ const Item = () => {
     navigate('/inventory/add-item');
   };
 
+  const handleEditItem = (item) => {
+    setEditingItem(item);
+    setEditForm({
+      name: item.name || '',
+      sku: item.sku || '',
+      type: item.type || '',
+      description: item.description || '',
+      rate: item.rate || '',
+      quantity: item.quantity || ''
+    });
+    setEditError(null);
+  };
+
+  const handleEditFormChange = (field, value) => {
+    setEditForm(prev => ({
+      ...prev,
+      [field]: value
+    }));
+  };
+
+  const handleCancelEdit = () => {
+    setEditingItem(null);
+    setEditForm({
+      name: '',
+      sku: '',
+      type: '',
+      description: '',
+      rate: '',
+      quantity: ''
+    });
+    setEditError(null);
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editingItem) return;
+    
+    try {
+      const itemId = editingItem.id || editingItem._id;
+      
+      // Staff can only edit quantity for same-day items
+      if (user.role === 'staff') {
+        const itemCreatedDate = new Date(editingItem.created_at).toDateString();
+        const today = new Date().toDateString();
+        
+        if (itemCreatedDate !== today) {
+          setEditError('You can only edit quantity for today\'s items');
+          return;
+        }
+        
+        // Staff can only edit quantity
+        const payload = { quantity: parseInt(editForm.quantity) || 0 };
+        let res = await fetchWithAuth(`/api/inventory/items/${encodeURIComponent(itemId)}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        if (!res.ok) {
+          res = await fetchWithAuth(`/api/inventory/${encodeURIComponent(itemId)}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+        }
+
+        if (res.ok) {
+          const updatedItem = await res.json();
+          setItems(prev => prev.map(i => (i.id || i._id) === itemId ? updatedItem : i));
+          handleCancelEdit();
+        } else {
+          const data = await res.json().catch(() => ({}));
+          setEditError(data.error || 'Failed to update item');
+        }
+      } else {
+        // Admin can edit all fields
+        const payload = {
+          name: editForm.name,
+          sku: editForm.sku,
+          type: editForm.type,
+          description: editForm.description,
+          rate: parseFloat(editForm.rate) || 0,
+          quantity: parseInt(editForm.quantity) || 0
+        };
+
+        let res = await fetchWithAuth(`/api/inventory/items/${encodeURIComponent(itemId)}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        if (!res.ok) {
+          res = await fetchWithAuth(`/api/inventory/${encodeURIComponent(itemId)}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+        }
+
+        if (res.ok) {
+          const updatedItem = await res.json();
+          setItems(prev => prev.map(i => (i.id || i._id) === itemId ? updatedItem : i));
+          handleCancelEdit();
+        } else {
+          const data = await res.json().catch(() => ({}));
+          setEditError(data.error || 'Failed to update item');
+        }
+      }
+    } catch (err) {
+      console.error('Save error:', err);
+      setEditError('Something went wrong while saving');
+    }
+  };
+
   const handleSort = (field) => {
     if (sortBy === field) {
       setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
@@ -71,76 +190,66 @@ const Item = () => {
       setSortBy(field);
       setSortOrder('asc');
     }
-    setShowOptionsDropdown(false);
   };
 
   const handleExportCSV = () => {
-    const csvContent = "data:text/csv;charset=utf-8," + 
-      "Name,SKU,Type,Description,Rate,Quantity\n" +
-      filteredAndSortedItems.map(item => 
-        `"${item.name}","${item.sku}","${item.type}","${item.description || ''}","${item.rate}","${item.quantity}"`
-      ).join("\n");
+    const headers = ['Name', 'SKU', 'Type', 'Description', 'Rate', 'Quantity', 'Total Value', 'Created Date'];
+    const rows = filteredAndSortedItems.map(item => [
+      item.name || '',
+      item.sku || '',
+      item.type || '',
+      item.description || '',
+      item.rate || 0,
+      item.quantity || 0,
+      ((item.rate || 0) * (item.quantity || 0)).toFixed(2),
+      new Date(item.created_at).toLocaleDateString()
+    ]);
 
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
-    link.setAttribute("download", "inventory_items.csv");
-    document.body.appendChild(link);
+    const csv = [
+      headers.join(','),
+      ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
+    ].join('\n');
+
+    const link = document.createElement('a');
+    link.href = `data:text/csv;charset=utf-8,${encodeURIComponent(csv)}`;
+    link.download = `inventory-${new Date().toISOString().split('T')[0]}.csv`;
     link.click();
-    document.body.removeChild(link);
-    setShowOptionsDropdown(false);
   };
 
   const filteredItems = items.filter(item =>
-    (item.name && item.name.toLowerCase().includes(searchTerm.toLowerCase())) ||
-    (item.sku && item.sku.toLowerCase().includes(searchTerm.toLowerCase())) ||
-    (item.type && item.type.toLowerCase().includes(searchTerm.toLowerCase()))
+    (item.name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (item.sku || '').toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   const filteredAndSortedItems = [...filteredItems].sort((a, b) => {
-    let aValue = a[sortBy];
-    let bValue = b[sortBy];
-    
-    if (typeof aValue === 'string') {
-      aValue = aValue.toLowerCase();
-      bValue = bValue.toLowerCase();
-    }
-    
-    if (sortOrder === 'asc') {
-      return aValue > bValue ? 1 : -1;
+    let aValue = a[sortBy] || '';
+    let bValue = b[sortBy] || '';
+
+    // Convert to numbers for numeric fields
+    if (sortBy === 'quantity' || sortBy === 'rate') {
+      aValue = parseFloat(aValue) || 0;
+      bValue = parseFloat(bValue) || 0;
     } else {
-      return aValue < bValue ? 1 : -1;
+      aValue = String(aValue).toLowerCase();
+      bValue = String(bValue).toLowerCase();
     }
+
+    if (aValue < bValue) return sortOrder === 'asc' ? -1 : 1;
+    if (aValue > bValue) return sortOrder === 'asc' ? 1 : -1;
+    return 0;
   });
 
   if (loading) {
     return (
-      <main className="main-content" style={{ background: '#f8fafc', minHeight: '100vh', padding: '20px' }}>
-        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '400px' }}>
-          <div style={{ 
-            display: 'flex', 
-            flexDirection: 'column', 
-            alignItems: 'center', 
-            gap: '16px' 
-          }}>
-            <div style={{ 
-              width: '40px', 
-              height: '40px', 
-              border: '4px solid #e5e7eb', 
-              borderTop: '4px solid #3b82f6', 
-              borderRadius: '50%',
-              animation: 'spin 1s linear infinite' 
-            }} />
-            <div style={{ fontSize: '16px', color: '#6b7280' }}>Loading inventory items...</div>
-          </div>
-        </div>
-      </main>
+      <div style={{ padding: '20px', textAlign: 'center', color: '#6b7280' }}>
+        Loading inventory...
+      </div>
     );
   }
 
   return (
-    <main className="main-content" style={{ background: '#f8fafc', minHeight: '100vh', padding: '20px' }}>
-      <div style={{ maxWidth: '1200px', margin: '0 auto' }}>
+    <>
+      <div style={{ padding: '20px', maxWidth: '1200px', margin: '0 auto' }}>
         {/* Back Button */}
         <button
           onClick={() => navigate('/')}
@@ -175,7 +284,7 @@ const Item = () => {
               color: '#1f2937',
               margin: '0 0 8px 0'
             }}>
-              Inventory Items
+              📦 Inventory
             </h1>
             <p style={{ 
               fontSize: '14px', 
@@ -186,26 +295,28 @@ const Item = () => {
             </p>
           </div>
           <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-            <button
-              onClick={handleAddItem}
-              style={{
-                background: '#3b82f6',
-                color: 'white',
-                border: 'none',
-                padding: '10px 20px',
-                borderRadius: '6px',
-                fontSize: '14px',
-                fontWeight: '500',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                transition: 'background-color 0.2s'
-              }}
-            >
-              <span style={{ fontSize: '16px' }}>+</span>
-              Add Item
-            </button>
+            {user.role === 'admin' && (
+              <button
+                onClick={handleAddItem}
+                style={{
+                  background: '#3b82f6',
+                  color: 'white',
+                  border: 'none',
+                  padding: '10px 20px',
+                  borderRadius: '6px',
+                  fontSize: '14px',
+                  fontWeight: '500',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  transition: 'background-color 0.2s'
+                }}
+              >
+                <span style={{ fontSize: '16px' }}>+</span>
+                Add Item
+              </button>
+            )}
             <div style={{ position: 'relative' }}>
               <button
                 onClick={() => setShowOptionsDropdown(!showOptionsDropdown)}
@@ -381,17 +492,10 @@ const Item = () => {
           </div>
         )}
 
-        {/* Debug: show count and raw JSON for troubleshooting */}
-        <div style={{ marginBottom: 12 }}>
-          <div style={{ padding: 8, borderRadius: 6, background: '#fff', border: '1px solid #e6e6e6' }}>
-            <div style={{ fontSize: 13, color: '#6b7280', marginBottom: 6 }}>Debug: {filteredAndSortedItems.length} items</div>
-            <pre style={{ maxHeight: 120, overflow: 'auto', fontSize: 12, color: '#0b3b2a', margin: 0 }}>{JSON.stringify(filteredAndSortedItems, null, 2)}</pre>
-          </div>
-        </div>
-
         {/* Items Table */}
         <InventoryDetails
           items={filteredAndSortedItems}
+          onEdit={handleEditItem}
           onDelete={async (id) => {
             if (!id) return;
             const confirmed = window.confirm('Delete this item?');
@@ -421,6 +525,310 @@ const Item = () => {
         />
       </div>
 
+      {/* Edit Modal */}
+      {editingItem && (
+        <>
+          <div 
+            style={{
+              position: 'fixed',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              background: 'rgba(0, 0, 0, 0.5)',
+              zIndex: 50,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '20px'
+            }}
+            onClick={handleCancelEdit}
+          >
+            <div 
+              style={{
+                background: 'white',
+                borderRadius: '8px',
+                boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1)',
+                maxWidth: '500px',
+                width: '100%',
+                maxHeight: '90vh',
+                overflowY: 'auto'
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div style={{ 
+                padding: '20px',
+                borderBottom: '1px solid #e5e7eb'
+              }}>
+                <h2 style={{ 
+                  fontSize: '20px', 
+                  fontWeight: '600', 
+                  color: '#1f2937',
+                  margin: 0 
+                }}>
+                  Edit Item
+                </h2>
+                {user.role === 'staff' && (
+                  <p style={{ 
+                    fontSize: '13px', 
+                    color: '#f59e0b',
+                    margin: '8px 0 0 0',
+                    padding: '8px 12px',
+                    background: '#fef3c7',
+                    borderRadius: '4px',
+                    border: '1px solid #fde68a'
+                  }}>
+                    ⚠️ As staff, you can only edit quantity for today's items
+                  </p>
+                )}
+              </div>
+
+              <div style={{ padding: '20px' }}>
+                {/* Error Message */}
+                {editError && (
+                  <div style={{ 
+                    background: '#fef2f2', 
+                    border: '1px solid #fecaca', 
+                    color: '#dc2626',
+                    padding: '12px 16px',
+                    borderRadius: '6px',
+                    marginBottom: '16px',
+                    fontSize: '14px',
+                    fontWeight: '500'
+                  }}>
+                    ❌ {editError}
+                  </div>
+                )}
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                  {/* Name */}
+                  <div>
+                    <label style={{ 
+                      display: 'block', 
+                      fontSize: '14px', 
+                      fontWeight: '500', 
+                      color: '#374151',
+                      marginBottom: '6px'
+                    }}>
+                      Name {user.role === 'staff' && <span style={{ color: '#9ca3af' }}>(read-only)</span>}
+                    </label>
+                    <input
+                      type="text"
+                      value={editForm.name}
+                      onChange={(e) => handleEditFormChange('name', e.target.value)}
+                      disabled={user.role === 'staff'}
+                      style={{
+                        width: '100%',
+                        padding: '8px 12px',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '6px',
+                        fontSize: '14px',
+                        outline: 'none',
+                        background: user.role === 'staff' ? '#f3f4f6' : 'white',
+                        cursor: user.role === 'staff' ? 'not-allowed' : 'text'
+                      }}
+                    />
+                  </div>
+
+                  {/* SKU */}
+                  <div>
+                    <label style={{ 
+                      display: 'block', 
+                      fontSize: '14px', 
+                      fontWeight: '500', 
+                      color: '#374151',
+                      marginBottom: '6px'
+                    }}>
+                      SKU {user.role === 'staff' && <span style={{ color: '#9ca3af' }}>(read-only)</span>}
+                    </label>
+                    <input
+                      type="text"
+                      value={editForm.sku}
+                      onChange={(e) => handleEditFormChange('sku', e.target.value)}
+                      disabled={user.role === 'staff'}
+                      style={{
+                        width: '100%',
+                        padding: '8px 12px',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '6px',
+                        fontSize: '14px',
+                        outline: 'none',
+                        background: user.role === 'staff' ? '#f3f4f6' : 'white',
+                        cursor: user.role === 'staff' ? 'not-allowed' : 'text'
+                      }}
+                    />
+                  </div>
+
+                  {/* Type */}
+                  <div>
+                    <label style={{ 
+                      display: 'block', 
+                      fontSize: '14px', 
+                      fontWeight: '500', 
+                      color: '#374151',
+                      marginBottom: '6px'
+                    }}>
+                      Type {user.role === 'staff' && <span style={{ color: '#9ca3af' }}>(read-only)</span>}
+                    </label>
+                    <input
+                      type="text"
+                      value={editForm.type}
+                      onChange={(e) => handleEditFormChange('type', e.target.value)}
+                      disabled={user.role === 'staff'}
+                      style={{
+                        width: '100%',
+                        padding: '8px 12px',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '6px',
+                        fontSize: '14px',
+                        outline: 'none',
+                        background: user.role === 'staff' ? '#f3f4f6' : 'white',
+                        cursor: user.role === 'staff' ? 'not-allowed' : 'text'
+                      }}
+                    />
+                  </div>
+
+                  {/* Description */}
+                  <div>
+                    <label style={{ 
+                      display: 'block', 
+                      fontSize: '14px', 
+                      fontWeight: '500', 
+                      color: '#374151',
+                      marginBottom: '6px'
+                    }}>
+                      Description {user.role === 'staff' && <span style={{ color: '#9ca3af' }}>(read-only)</span>}
+                    </label>
+                    <textarea
+                      value={editForm.description}
+                      onChange={(e) => handleEditFormChange('description', e.target.value)}
+                      disabled={user.role === 'staff'}
+                      rows={3}
+                      style={{
+                        width: '100%',
+                        padding: '8px 12px',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '6px',
+                        fontSize: '14px',
+                        outline: 'none',
+                        resize: 'vertical',
+                        background: user.role === 'staff' ? '#f3f4f6' : 'white',
+                        cursor: user.role === 'staff' ? 'not-allowed' : 'text'
+                      }}
+                    />
+                  </div>
+
+                  {/* Rate */}
+                  <div>
+                    <label style={{ 
+                      display: 'block', 
+                      fontSize: '14px', 
+                      fontWeight: '500', 
+                      color: '#374151',
+                      marginBottom: '6px'
+                    }}>
+                      Rate {user.role === 'staff' && <span style={{ color: '#9ca3af' }}>(read-only)</span>}
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={editForm.rate}
+                      onChange={(e) => handleEditFormChange('rate', e.target.value)}
+                      disabled={user.role === 'staff'}
+                      style={{
+                        width: '100%',
+                        padding: '8px 12px',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '6px',
+                        fontSize: '14px',
+                        outline: 'none',
+                        background: user.role === 'staff' ? '#f3f4f6' : 'white',
+                        cursor: user.role === 'staff' ? 'not-allowed' : 'text'
+                      }}
+                    />
+                  </div>
+
+                  {/* Quantity - Editable for both */}
+                  <div>
+                    <label style={{ 
+                      display: 'block', 
+                      fontSize: '14px', 
+                      fontWeight: '500', 
+                      color: '#374151',
+                      marginBottom: '6px'
+                    }}>
+                      Quantity {user.role === 'staff' && (() => {
+                        const itemCreatedDate = new Date(editingItem.created_at);
+                        const now = new Date();
+                        const itemDay = new Date(itemCreatedDate.getFullYear(), itemCreatedDate.getMonth(), itemCreatedDate.getDate());
+                        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+                        const isToday = itemDay.getTime() === today.getTime();
+                        
+                        return isToday 
+                          ? <span style={{ color: '#10b981' }}>✓ Editable</span>
+                          : <span style={{ color: '#ef4444' }}>✗ Uneditable</span>;
+                      })()}
+                    </label>
+                    <input
+                      type="number"
+                      value={editForm.quantity}
+                      onChange={(e) => handleEditFormChange('quantity', e.target.value)}
+                      style={{
+                        width: '100%',
+                        padding: '8px 12px',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '6px',
+                        fontSize: '14px',
+                        outline: 'none'
+                      }}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ 
+                padding: '16px 20px',
+                borderTop: '1px solid #e5e7eb',
+                display: 'flex',
+                gap: '12px',
+                justifyContent: 'flex-end'
+              }}>
+                <button
+                  onClick={handleCancelEdit}
+                  style={{
+                    padding: '8px 16px',
+                    border: '1px solid #d1d5db',
+                    background: 'white',
+                    borderRadius: '6px',
+                    fontSize: '14px',
+                    fontWeight: '500',
+                    color: '#374151',
+                    cursor: 'pointer'
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSaveEdit}
+                  style={{
+                    padding: '8px 16px',
+                    border: 'none',
+                    background: '#3b82f6',
+                    color: 'white',
+                    borderRadius: '6px',
+                    fontSize: '14px',
+                    fontWeight: '500',
+                    cursor: 'pointer'
+                  }}
+                >
+                  Save Changes
+                </button>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+
       {/* Overlay for dropdown */}
       {showOptionsDropdown && (
         <div 
@@ -435,7 +843,7 @@ const Item = () => {
           onClick={() => setShowOptionsDropdown(false)}
         />
       )}
-    </main>
+    </>
   );
 };
 

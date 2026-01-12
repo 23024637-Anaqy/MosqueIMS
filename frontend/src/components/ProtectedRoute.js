@@ -2,7 +2,16 @@ import { Navigate } from 'react-router-dom';
 import { useAuthContext } from '../hooks/useAuthContext';
 
 const ProtectedRoute = ({ children, requiredRole = null }) => {
-  const { user } = useAuthContext();
+  const { user, isLoading } = useAuthContext();
+
+  // Show loading state while checking authentication
+  if (isLoading) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
+        <div>Loading...</div>
+      </div>
+    );
+  }
 
   // If no user is logged in, redirect to login
   if (!user) {

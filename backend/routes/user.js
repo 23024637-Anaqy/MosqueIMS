@@ -1,11 +1,11 @@
 const express = require('express');
-
-
+const requireAuth = require('../middleware/requireAuth');
 
 // controller functions
 const {
     loginUser,
-    signupUser
+    signupUser,
+    getCurrentUser
 } = require('../controllers/userController');
 
 const router = express.Router();
@@ -16,5 +16,7 @@ router.post('/login', loginUser);
 // signup route
 router.post('/signup', signupUser);
 
+// get current user (requires auth)
+router.get('/me', requireAuth, getCurrentUser);
 
 module.exports = router;

@@ -1,6 +1,6 @@
 import React from 'react';
 
-const InventoryDetails = ({ items, onDelete }) => {
+const InventoryDetails = ({ items, onDelete, onEdit }) => {
   if (!items || items.length === 0) {
     return (
       <div style={{ 
@@ -179,23 +179,42 @@ const InventoryDetails = ({ items, onDelete }) => {
                 textAlign: 'right', 
                 fontWeight: '500' 
               }}>
-                {onDelete && (
-                  <button
-                    onClick={() => onDelete(item.id || item._id)}
-                    style={{
-                      background: '#fee2e2',
-                      color: '#b91c1c',
-                      border: '1px solid #fecaca',
-                      padding: '6px 10px',
-                      borderRadius: '6px',
-                      cursor: 'pointer',
-                      fontSize: '13px',
-                      fontWeight: '600'
-                    }}
-                  >
-                    Delete
-                  </button>
-                )}
+                <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                  {onEdit && (
+                    <button
+                      onClick={() => onEdit(item)}
+                      style={{
+                        background: '#dbeafe',
+                        color: '#1e40af',
+                        border: '1px solid #bfdbfe',
+                        padding: '6px 10px',
+                        borderRadius: '6px',
+                        cursor: 'pointer',
+                        fontSize: '13px',
+                        fontWeight: '600'
+                      }}
+                    >
+                      Edit
+                    </button>
+                  )}
+                  {onDelete && (
+                    <button
+                      onClick={() => onDelete(item.id || item._id)}
+                      style={{
+                        background: '#fee2e2',
+                        color: '#b91c1c',
+                        border: '1px solid #fecaca',
+                        padding: '6px 10px',
+                        borderRadius: '6px',
+                        cursor: 'pointer',
+                        fontSize: '13px',
+                        fontWeight: '600'
+                      }}
+                    >
+                      Delete
+                    </button>
+                  )}
+                </div>
               </td>
             </tr>
           ))}

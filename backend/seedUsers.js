@@ -1,48 +1,26 @@
-const mongoose = require('mongoose');
-const User = require('./models/userModel');
+require('dotenv').config();
+const { pool, query } = require('./db');
 const bcrypt = require('bcrypt');
 
 const generateUsers = async () => {
     try {
-        // Clear existing users
-        await User.deleteMany({});
-        console.log('Cleared existing users');
+        console.log('Seeding users...');
+
+        // Delete all existing users first
+        await query('DELETE FROM users');
+        console.log('🗑️  Deleted all existing users');
 
         const usersToCreate = [
             {
                 name: 'Admin User',
-                email: 'admin@quantix.com',
-                password: await bcrypt.hash('admin123', 10),
+                email: 'admin1',
+                password: 'sultanadmin123',
                 role: 'admin'
             },
             {
-                name: 'John Smith',
-                email: 'john.smith@quantix.com',
-                password: await bcrypt.hash('staff123', 10),
-                role: 'staff'
-            },
-            {
-                name: 'Sarah Johnson',
-                email: 'sarah.johnson@quantix.com',
-                password: await bcrypt.hash('staff123', 10),
-                role: 'staff'
-            },
-            {
-                name: 'Mike Davis',
-                email: 'mike.davis@quantix.com',
-                password: await bcrypt.hash('staff123', 10),
-                role: 'staff'
-            },
-            {
-                name: 'Emily Chen',
-                email: 'emily.chen@quantix.com',
-                password: await bcrypt.hash('staff123', 10),
-                role: 'staff'
-            },
-            {
-                name: 'David Wilson',
-                email: 'david.wilson@quantix.com',
-                password: await bcrypt.hash('staff123', 10),
+                name: 'Staff User',
+                email: 'staff1',
+                password: 'sultanstaff123',
                 role: 'staff'
             }
         ];
@@ -50,17 +28,39 @@ const generateUsers = async () => {
         // Create users
         const createdUsers = [];
         for (const userData of usersToCreate) {
-            const user = new User(userData);
-            await user.save();
-            createdUsers.push(user);
-            console.log(`✅ Created user: ${user.name} (${user.email})`);
+            // Hash password
+            const hashedPassword = await bcrypt.hash(userData.password, 10);
+            
+            // Insert user
+            const result = await query(
+                `INSERT INTO users (name, email, password, role) 
+                 VALUES ($1, $2, $3, $4) 
+                 RETURNING *`,
+                [userData.name, userData.email, hashedPassword, userData.role]
+            );
+            
+            if (result.rows.length > 0) {
+                console.log(`✅ Created user: ${userData.name} (${userData.email}) - Password: ${userData.password}`);
+                createdUsers.push(result.rows[0]);
+            }
         }
+
+        // Get user counts
+        const statsResult = await query(
+            `SELECT 
+                COUNT(*) as total,
+                SUM(CASE WHEN role = 'admin' THEN 1 ELSE 0 END) as admins,
+                SUM(CASE WHEN role = 'staff' THEN 1 ELSE 0 END) as staff
+             FROM users`
+        );
+        
+        const stats = statsResult.rows[0];
 
         console.log(`\n📊 User Summary:`);
         console.log(`====================`);
-        console.log(`Total Users Created: ${createdUsers.length}`);
-        console.log(`Admin Users: ${createdUsers.filter(u => u.role === 'admin').length}`);
-        console.log(`Staff Users: ${createdUsers.filter(u => u.role === 'staff').length}`);
+        console.log(`Total Users in DB: ${stats.total}`);
+        console.log(`Admin Users: ${stats.admins}`);
+        console.log(`Staff Users: ${stats.staff}`);
         console.log(`\n🔐 Login Credentials:`);
         console.log(`Admin: admin@quantix.com / admin123`);
         console.log(`Staff: john.smith@quantix.com / staff123`);
@@ -72,27 +72,20 @@ const generateUsers = async () => {
         
     } catch (error) {
         console.error('Error generating users:', error);
-    }
-};
-
-const connectDB = async () => {
-    try {
-        await mongoose.connect('mongodb://localhost:27017/quantix', {
-            useNewUrlParser: true,
-            useUnifiedTopology: true,
-        });
-        console.log('Connected to MongoDB');
-    } catch (error) {
-        console.error('MongoDB connection error:', error);
-        process.exit(1);
+        throw error;
     }
 };
 
 const main = async () => {
-    await connectDB();
-    await generateUsers();
-    await mongoose.connection.close();
-    console.log('Database connection closed');
+    try {
+        await generateUsers();
+        await pool.end();
+        console.log('Database connection closed');
+    } catch (error) {
+        console.error('Seeding failed:', error);
+        await pool.end();
+        process.exit(1);
+    }
 };
 
 main();

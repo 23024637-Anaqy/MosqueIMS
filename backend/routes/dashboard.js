@@ -1,9 +1,14 @@
 const express = require('express');
 const router = express.Router();
+const {
+  getAdminDashboardData,
+  getStaffDashboardData
+} = require('../controllers/dashboardController');
 
-// Feature removed in mosque prototype: dashboard & statistics
-router.all('*', (req, res) => {
-	res.status(410).json({ error: 'Dashboard/statistics feature removed for this prototype' });
-});
+// GET admin dashboard data
+router.get('/admin', getAdminDashboardData);
+
+// GET staff dashboard data
+router.get('/staff', getStaffDashboardData);
 
 module.exports = router;

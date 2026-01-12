@@ -12,9 +12,14 @@ const requireAuth = async (req, res, next) => {
     const token = authorization.split(' ')[1]
 
     try {
-        const {_id} = jwt.verify(token, process.env.SECRET)
+        const { id } = jwt.verify(token, process.env.SECRET)
     
-        req.user = await User.findOne({_id}).select('_id')
+        const user = await User.findById(id);
+        if (!user) {
+            return res.status(401).json({error: 'User not found'})
+        }
+        
+        req.user = { id: user.id, role: user.role };
         next()
     }   catch (error) {
         console.log(error)

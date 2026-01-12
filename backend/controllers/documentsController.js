@@ -1,61 +1,84 @@
 const Document = require('../models/documentModel');
 const User = require('../models/userModel');
+const { query: dbQuery } = require('../db');
 
 // Get all documents for admin, only user's documents for non-admin
 const getDocuments = async (req, res) => {
   try {
     const { page = 1, limit = 10, type, search, startDate, endDate } = req.query;
-    const { _id: userId, role } = req.user;
+    const { id: userId, role } = req.user;
 
     // Build query
-    let query = {};
+    let sql = `SELECT d.id, d.title, d.type, d.description, d.start_date, d.end_date, d.file_name, d.file_size, 
+               d.generated_by, d.total_stock_added, d.total_sales_amount, d.total_items_sold, 
+               d.number_of_orders, d.tags, d.is_archived, d.created_at, d.updated_at,
+               u.name as generated_by_name, u.email as generated_by_email
+               FROM documents d
+               LEFT JOIN users u ON d.generated_by = u.id
+               WHERE d.is_archived = false`;
+    const params = [];
+    let paramCount = 1;
     
     // Role-based access: admin sees all, users see only their own
     if (role !== 'admin') {
-      query.generatedBy = userId;
+      sql += ` AND d.generated_by = $${paramCount}`;
+      params.push(userId);
+      paramCount++;
     }
 
     // Filter by type
     if (type && type !== 'all') {
-      query.type = type;
+      sql += ` AND d.type = $${paramCount}`;
+      params.push(type);
+      paramCount++;
     }
 
     // Filter by date range
-    if (startDate || endDate) {
-      query.createdAt = {};
-      if (startDate) {
-        query.createdAt.$gte = new Date(startDate);
-      }
-      if (endDate) {
-        query.createdAt.$lte = new Date(endDate);
-      }
+    if (startDate) {
+      sql += ` AND d.created_at >= $${paramCount}`;
+      params.push(new Date(startDate));
+      paramCount++;
+    }
+    if (endDate) {
+      sql += ` AND d.created_at <= $${paramCount}`;
+      params.push(new Date(endDate));
+      paramCount++;
     }
 
     // Text search
     if (search) {
-      query.$or = [
-        { title: { $regex: search, $options: 'i' } },
-        { description: { $regex: search, $options: 'i' } },
-        { fileName: { $regex: search, $options: 'i' } }
-      ];
+      sql += ` AND (d.title ILIKE $${paramCount} OR d.description ILIKE $${paramCount} OR d.file_name ILIKE $${paramCount})`;
+      params.push(`%${search}%`);
+      paramCount++;
     }
 
-    // Only show non-archived documents by default
-    query.isArchived = false;
+    // Count total for pagination
+    const countSql = `SELECT COUNT(*) FROM documents d WHERE d.is_archived = false` + 
+                     (role !== 'admin' ? ` AND d.generated_by = ${userId}` : '');
+    const countResult = await dbQuery(countSql, []);
+    const total = parseInt(countResult.rows[0].count);
 
-    const documents = await Document.find(query)
-      .populate('generatedBy', 'name email')
-      .select('-fileData') // Exclude file data from list view for performance
-      .sort({ createdAt: -1 })
-      .limit(limit * 1)
-      .skip((page - 1) * limit);
+    // Add sorting and pagination
+    sql += ' ORDER BY d.created_at DESC';
+    sql += ` LIMIT $${paramCount} OFFSET $${paramCount + 1}`;
+    params.push(parseInt(limit), (parseInt(page) - 1) * parseInt(limit));
 
-    const total = await Document.countDocuments(query);
+    const result = await dbQuery(sql, params);
+
+    // Format the response to match what frontend expects
+    const documents = result.rows.map(doc => ({
+      ...doc,
+      generatedBy: {
+        _id: doc.generated_by,
+        name: doc.generated_by_name,
+        email: doc.generated_by_email
+      }
+    }));
 
     res.status(200).json({
       documents,
       totalPages: Math.ceil(total / limit),
-      currentPage: page,
+      currentPage: parseInt(page),
       total
     });
 
@@ -69,17 +92,22 @@ const getDocuments = async (req, res) => {
 const getDocument = async (req, res) => {
   try {
     const { id } = req.params;
-    const { _id: userId, role } = req.user;
+    const { id: userId, role } = req.user;
 
-    let query = { _id: id };
+    let sql = `SELECT d.*, u.name as generated_by_name, u.email as generated_by_email 
+               FROM documents d 
+               LEFT JOIN users u ON d.generated_by = u.id 
+               WHERE d.id = $1`;
+    const params = [id];
     
     // Role-based access: admin sees all, users see only their own
     if (role !== 'admin') {
-      query.generatedBy = userId;
+      sql += ' AND d.generated_by = $2';
+      params.push(userId);
     }
 
-    const document = await Document.findOne(query)
-      .populate('generatedBy', 'name email');
+    const result = await dbQuery(sql, params);
+    const document = result.rows[0];
 
     if (!document) {
       return res.status(404).json({ error: 'Document not found' });
@@ -108,7 +136,7 @@ const saveDocument = async (req, res) => {
       tags
     } = req.body;
 
-    const { _id: userId } = req.user;
+    const { id: userId } = req.user;
 
     // Validate required fields
     if (!title || !type || !fileData || !fileName) {
@@ -118,27 +146,28 @@ const saveDocument = async (req, res) => {
     }
 
     // Create new document
-    const document = new Document({
+    const document = await Document.create({
       title,
       type,
       description: description || '',
-      dateRange,
-      fileData,
-      fileName,
-      fileSize: fileSize || 0,
-      generatedBy: userId,
-      metadata,
-      tags: tags || []
+      start_date: dateRange?.startDate || null,
+      end_date: dateRange?.endDate || null,
+      file_data: fileData,
+      file_name: fileName,
+      file_size: fileSize || 0,
+      generated_by: userId,
+      total_stock_added: metadata?.totalStockAdded || null,
+      total_sales_amount: metadata?.totalSalesAmount || null,
+      total_items_sold: metadata?.totalItemsSold || null,
+      number_of_orders: metadata?.numberOfOrders || null,
+      tags: tags || null
     });
 
-    await document.save();
-
     // Return document without file data for response
-    const savedDocument = await Document.findById(document._id)
-      .populate('generatedBy', 'name email')
-      .select('-fileData');
+    const sql = `SELECT id, title, type, description, start_date, end_date, file_name, file_size, generated_by, total_stock_added, total_sales_amount, total_items_sold, number_of_orders, tags, is_archived, created_at, updated_at FROM documents WHERE id = $1`;
+    const result = await dbQuery(sql, [document.id]);
 
-    res.status(201).json(savedDocument);
+    res.status(201).json(result.rows[0]);
 
   } catch (error) {
     console.error('Error saving document:', error);
@@ -151,31 +180,36 @@ const updateDocument = async (req, res) => {
   try {
     const { id } = req.params;
     const { title, description, tags, type } = req.body;
-    const { _id: userId, role } = req.user;
+    const { id: userId, role } = req.user;
 
-    let query = { _id: id };
+    // Check if document exists and user has permission
+    let checkSql = 'SELECT * FROM documents WHERE id = $1';
+    const checkParams = [id];
     
-    // Role-based access: admin can update all, users can update only their own
     if (role !== 'admin') {
-      query.generatedBy = userId;
+      checkSql += ' AND generated_by = $2';
+      checkParams.push(userId);
     }
 
-    const document = await Document.findOneAndUpdate(
-      query,
-      {
-        ...(title && { title }),
-        ...(description !== undefined && { description }),
-        ...(tags && { tags }),
-        ...(type && { type })
-      },
-      { new: true }
-    ).populate('generatedBy', 'name email').select('-fileData');
-
-    if (!document) {
+    const checkResult = await dbQuery(checkSql, checkParams);
+    if (checkResult.rows.length === 0) {
       return res.status(404).json({ error: 'Document not found' });
     }
 
-    res.status(200).json(document);
+    // Build update query
+    const updates = {};
+    if (title) updates.title = title;
+    if (description !== undefined) updates.description = description;
+    if (tags) updates.tags = tags;
+    if (type) updates.type = type;
+
+    const document = await Document.update(id, updates);
+
+    // Return without file data
+    const sql = `SELECT id, title, type, description, start_date, end_date, file_name, file_size, generated_by, total_stock_added, total_sales_amount, total_items_sold, number_of_orders, tags, is_archived, created_at, updated_at FROM documents WHERE id = $1`;
+    const result = await dbQuery(sql, [id]);
+
+    res.status(200).json(result.rows[0]);
 
   } catch (error) {
     console.error('Error updating document:', error);
@@ -187,29 +221,30 @@ const updateDocument = async (req, res) => {
 const toggleArchiveDocument = async (req, res) => {
   try {
     const { id } = req.params;
-    const { _id: userId, role } = req.user;
+    const { id: userId, role } = req.user;
 
-    let query = { _id: id };
+    // Check if document exists and user has permission
+    let checkSql = 'SELECT * FROM documents WHERE id = $1';
+    const checkParams = [id];
     
-    // Role-based access: admin can archive all, users can archive only their own
     if (role !== 'admin') {
-      query.generatedBy = userId;
+      checkSql += ' AND generated_by = $2';
+      checkParams.push(userId);
     }
 
-    const document = await Document.findOne(query);
-
-    if (!document) {
+    const checkResult = await dbQuery(checkSql, checkParams);
+    if (checkResult.rows.length === 0) {
       return res.status(404).json({ error: 'Document not found' });
     }
 
-    document.isArchived = !document.isArchived;
-    await document.save();
+    const currentDoc = checkResult.rows[0];
+    await Document.setArchived(id, !currentDoc.is_archived);
 
-    const updatedDocument = await Document.findById(document._id)
-      .populate('generatedBy', 'name email')
-      .select('-fileData');
+    // Return updated document without file data
+    const sql = `SELECT id, title, type, description, start_date, end_date, file_name, file_size, generated_by, total_stock_added, total_sales_amount, total_items_sold, number_of_orders, tags, is_archived, created_at, updated_at FROM documents WHERE id = $1`;
+    const result = await dbQuery(sql, [id]);
 
-    res.status(200).json(updatedDocument);
+    res.status(200).json(result.rows[0]);
 
   } catch (error) {
     console.error('Error archiving document:', error);
@@ -228,7 +263,7 @@ const deleteDocument = async (req, res) => {
       return res.status(403).json({ error: 'Only administrators can delete documents' });
     }
 
-    const document = await Document.findByIdAndDelete(id);
+    const document = await Document.delete(id);
 
     if (!document) {
       return res.status(404).json({ error: 'Document not found' });
@@ -246,16 +281,19 @@ const deleteDocument = async (req, res) => {
 const downloadDocument = async (req, res) => {
   try {
     const { id } = req.params;
-    const { _id: userId, role } = req.user;
+    const { id: userId, role } = req.user;
 
-    let query = { _id: id };
+    let sql = 'SELECT file_data, file_name, file_size FROM documents WHERE id = $1';
+    const params = [id];
     
     // Role-based access: admin can download all, users can download only their own
     if (role !== 'admin') {
-      query.generatedBy = userId;
+      sql += ' AND generated_by = $2';
+      params.push(userId);
     }
 
-    const document = await Document.findOne(query);
+    const result = await dbQuery(sql, params);
+    const document = result.rows[0];
 
     if (!document) {
       return res.status(404).json({ error: 'Document not found' });
@@ -263,9 +301,9 @@ const downloadDocument = async (req, res) => {
 
     // Return the file data as base64
     res.status(200).json({
-      fileData: document.fileData,
-      fileName: document.fileName,
-      fileSize: document.fileSize
+      fileData: document.file_data,
+      fileName: document.file_name,
+      fileSize: document.file_size
     });
 
   } catch (error) {
@@ -277,47 +315,47 @@ const downloadDocument = async (req, res) => {
 // Get document statistics
 const getDocumentStats = async (req, res) => {
   try {
-    const { _id: userId, role } = req.user;
+    const { id: userId, role } = req.user;
 
-    let matchQuery = { isArchived: false };
+    let sql = `
+      SELECT 
+        COUNT(*) as total_documents,
+        SUM(file_size) as total_size,
+        json_agg(json_build_object('type', type, 'count', type_count, 'size', type_size)) as type_breakdown
+      FROM (
+        SELECT 
+          type,
+          COUNT(*) as type_count,
+          SUM(file_size) as type_size
+        FROM documents
+        WHERE is_archived = false
+    `;
+    
+    const params = [];
+    let paramCount = 1;
     
     // Role-based access: admin sees all, users see only their own
     if (role !== 'admin') {
-      matchQuery.generatedBy = userId;
+      sql += ` AND generated_by = $${paramCount}`;
+      params.push(userId);
+      paramCount++;
     }
 
-    const stats = await Document.aggregate([
-      { $match: matchQuery },
-      {
-        $group: {
-          _id: '$type',
-          count: { $sum: 1 },
-          totalSize: { $sum: '$fileSize' }
-        }
-      },
-      {
-        $group: {
-          _id: null,
-          totalDocuments: { $sum: '$count' },
-          totalSize: { $sum: '$totalSize' },
-          typeBreakdown: {
-            $push: {
-              type: '$_id',
-              count: '$count',
-              size: '$totalSize'
-            }
-          }
-        }
-      }
-    ]);
+    sql += `
+        GROUP BY type
+      ) sub
+    `;
 
-    const result = stats[0] || {
-      totalDocuments: 0,
-      totalSize: 0,
-      typeBreakdown: []
+    const result = await dbQuery(sql, params);
+    const stats = result.rows[0];
+
+    const response = {
+      totalDocuments: parseInt(stats.total_documents) || 0,
+      totalSize: parseInt(stats.total_size) || 0,
+      typeBreakdown: stats.type_breakdown || []
     };
 
-    res.status(200).json(result);
+    res.status(200).json(response);
 
   } catch (error) {
     console.error('Error fetching document stats:', error);

@@ -149,7 +149,7 @@ const Reports = () => {
           const sku = (item.sku || 'N/A').substring(0, 10);
           const type = (item.type || 'N/A').substring(0, 10);
           const qty = (item.quantity || 0).toString();
-          const rate = `$${(item.rate || 0).toFixed(2)}`;
+          const rate = `$${(parseFloat(item.rate) || 0).toFixed(2)}`;
           
           doc.text(name, colX.name, yPosition);
           doc.text(sku, colX.sku, yPosition);

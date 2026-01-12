@@ -1,7 +1,5 @@
 const Inventory = require('../models/inventoryModel');
-const Sale = require('../models/saleModel');
-const Purchase = require('../models/purchaseModel');
-const mongoose = require('mongoose');
+const { query: dbQuery } = require('../db');
 
 // Generate report data for the specified date range
 const generateReport = async (req, res) => {
@@ -23,39 +21,24 @@ const generateReport = async (req, res) => {
     }
 
     // Get inventory additions (new items created within date range)
-    const inventoryAdditions = await Inventory.find({
-      createdAt: {
-        $gte: start,
-        $lte: end
-      }
-    }).select('name quantity type description rate createdAt user_id')
-      .sort({ createdAt: -1 });
+    const inventoryAdditions = await dbQuery(
+      `SELECT id, name, quantity, type, description, rate, created_at, user_id 
+       FROM products 
+       WHERE created_at >= $1 AND created_at <= $2 
+       ORDER BY created_at DESC`,
+      [start, end]
+    );
 
-    // Get purchases within date range
-    const purchases = await Purchase.find({
-      purchasedDate: {
-        $gte: start,
-        $lte: end
-      }
-    }).populate('InventoryId', 'name type')
-      .sort({ purchasedDate: -1 });
-
-    // Get sales within date range
-    const sales = await Sale.find({
-      orderDate: {
-        $gte: start,
-        $lte: end
-      }
-    }).select('orderNumber customerName items subtotal tax discount total orderDate status')
-      .sort({ orderDate: -1 });
+    // Parse numeric fields from PostgreSQL strings
+    const items = inventoryAdditions.rows.map(item => ({
+      ...item,
+      quantity: parseInt(item.quantity),
+      rate: item.rate ? parseFloat(item.rate) : 0
+    }));
 
     // Calculate totals
-    const totalInventoryQuantity = inventoryAdditions.reduce((sum, item) => sum + item.quantity, 0);
-    const totalPurchasesQuantity = purchases.reduce((sum, purchase) => sum + purchase.quantityPurchased, 0);
-    const totalSalesAmount = sales.reduce((sum, sale) => sum + sale.total, 0);
-    const totalSalesQuantity = sales.reduce((sum, sale) => {
-      return sum + sale.items.reduce((itemSum, item) => itemSum + item.quantity, 0);
-    }, 0);
+    const totalInventoryQuantity = items.reduce((sum, item) => sum + item.quantity, 0);
+    const totalInventoryValue = items.reduce((sum, item) => sum + item.rate * item.quantity, 0);
 
     // Format response data
     const reportData = {
@@ -64,55 +47,23 @@ const generateReport = async (req, res) => {
         endDate
       },
       inventory: {
-        items: inventoryAdditions.map(item => ({
-          _id: item._id,
+        items: items.map(item => ({
+          id: item.id,
           name: item.name,
           quantity: item.quantity,
           type: item.type,
           description: item.description,
           rate: item.rate,
-          dateAdded: item.createdAt,
-          supplier: 'N/A' // Inventory doesn't have supplier info
+          dateAdded: item.created_at,
+          value: item.rate * item.quantity
         })),
-        totalQuantity: totalInventoryQuantity
-      },
-      purchases: {
-        items: purchases.map(purchase => ({
-          _id: purchase._id,
-          name: purchase.InventoryId?.name || 'Unknown Item',
-          type: purchase.InventoryId?.type || 'Unknown',
-          quantity: purchase.quantityPurchased,
-          dateAdded: purchase.purchasedDate,
-          supplier: 'N/A' // Purchase model doesn't have supplier info
-        })),
-        totalQuantity: totalPurchasesQuantity
-      },
-      sales: {
-        orders: sales.map(sale => ({
-          _id: sale._id,
-          orderNumber: sale.orderNumber,
-          customerName: sale.customerName,
-          items: sale.items.map(item => ({
-            productName: item.productName,
-            quantity: item.quantity,
-            unitPrice: item.unitPrice,
-            totalPrice: item.totalPrice
-          })),
-          subtotal: sale.subtotal,
-          tax: sale.tax,
-          discount: sale.discount,
-          total: sale.total,
-          saleDate: sale.orderDate,
-          status: sale.status
-        })),
-        totalAmount: totalSalesAmount,
-        totalQuantity: totalSalesQuantity
+        totalQuantity: totalInventoryQuantity,
+        totalValue: totalInventoryValue
       },
       summary: {
-        totalStockAdded: totalInventoryQuantity + totalPurchasesQuantity,
-        totalSalesAmount,
-        totalItemsSold: totalSalesQuantity,
-        numberOfOrders: sales.length
+        totalStockAdded: totalInventoryQuantity,
+        totalInventoryValue: totalInventoryValue,
+        numberOfItems: items.length
       }
     };
 
