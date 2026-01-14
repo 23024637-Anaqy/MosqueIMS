@@ -1,3 +1,5 @@
+import { getApiUrl } from '../config/api';
+
 export default async function fetchWithAuth(url, options = {}) {
   const raw = localStorage.getItem('user')
   let token = null
@@ -16,7 +18,10 @@ export default async function fetchWithAuth(url, options = {}) {
     headers.set('Content-Type', 'application/json')
   }
 
-  const res = await fetch(url, { ...options, headers })
+  // Convert relative URLs to absolute using backend URL
+  const fullUrl = url.startsWith('http') ? url : getApiUrl(url);
+
+  const res = await fetch(fullUrl, { ...options, headers })
 
   if (res.status === 401) {
     // Clear stored user and notify app to logout

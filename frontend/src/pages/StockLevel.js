@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useAuthContext } from '../hooks/useAuthContext';
 import { useNavigate } from 'react-router-dom';
+import { getApiUrl } from '../config/api';
 
 const StockLevel = () => {
   const { user } = useAuthContext();
@@ -24,7 +25,7 @@ const StockLevel = () => {
       }
 
       try {
-        const response = await fetch('/api/inventory/items', {
+        const response = await fetch(getApiUrl('/api/inventory/items'), {
           headers: {
             'Authorization': `Bearer ${user.token}`,
             'Content-Type': 'application/json',
