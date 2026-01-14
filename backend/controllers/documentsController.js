@@ -19,12 +19,8 @@ const getDocuments = async (req, res) => {
     const params = [];
     let paramCount = 1;
     
-    // Role-based access: admin sees all, users see only their own
-    if (role !== 'admin') {
-      sql += ` AND d.generated_by = $${paramCount}`;
-      params.push(userId);
-      paramCount++;
-    }
+    // All authenticated users can view all documents
+    // (role check removed - both admin and staff can see all documents)
 
     // Filter by type
     if (type && type !== 'all') {
@@ -52,9 +48,8 @@ const getDocuments = async (req, res) => {
       paramCount++;
     }
 
-    // Count total for pagination
-    const countSql = `SELECT COUNT(*) FROM documents d WHERE d.is_archived = false` + 
-                     (role !== 'admin' ? ` AND d.generated_by = ${userId}` : '');
+    // Count total for pagination (all users can see all documents)
+    const countSql = `SELECT COUNT(*) FROM documents d WHERE d.is_archived = false`;
     const countResult = await dbQuery(countSql, []);
     const total = parseInt(countResult.rows[0].count);
 
@@ -100,11 +95,7 @@ const getDocument = async (req, res) => {
                WHERE d.id = $1`;
     const params = [id];
     
-    // Role-based access: admin sees all, users see only their own
-    if (role !== 'admin') {
-      sql += ' AND d.generated_by = $2';
-      params.push(userId);
-    }
+    // All authenticated users can view any document
 
     const result = await dbQuery(sql, params);
     const document = result.rows[0];
@@ -286,11 +277,7 @@ const downloadDocument = async (req, res) => {
     let sql = 'SELECT file_data, file_name, file_size FROM documents WHERE id = $1';
     const params = [id];
     
-    // Role-based access: admin can download all, users can download only their own
-    if (role !== 'admin') {
-      sql += ' AND generated_by = $2';
-      params.push(userId);
-    }
+    // All authenticated users can download any document
 
     const result = await dbQuery(sql, params);
     const document = result.rows[0];
@@ -334,12 +321,7 @@ const getDocumentStats = async (req, res) => {
     const params = [];
     let paramCount = 1;
     
-    // Role-based access: admin sees all, users see only their own
-    if (role !== 'admin') {
-      sql += ` AND generated_by = $${paramCount}`;
-      params.push(userId);
-      paramCount++;
-    }
+    // All authenticated users can see stats for all documents
 
     sql += `
         GROUP BY type
