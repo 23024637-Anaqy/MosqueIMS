@@ -1,5 +1,6 @@
 import { useAuthContext } from '../hooks/useAuthContext';
 import { useState, useEffect } from 'react';
+import { getApiUrl } from '../config/api';
 
 const StaffDashboard = () => {
   const { user } = useAuthContext();
@@ -25,7 +26,7 @@ const StaffDashboard = () => {
 
     setLoading(true);
     try {
-      const response = await fetch('http://localhost:4000/api/dashboard/staff', {
+      const response = await fetch(getApiUrl('/api/dashboard/staff'), {
         headers: {
           'Authorization': `Bearer ${user.token}`,
           'Content-Type': 'application/json',
