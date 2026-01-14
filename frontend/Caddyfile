@@ -1,0 +1,12 @@
+:{$PORT}
+
+root * /app/build
+file_server
+try_files {path} /index.html
+
+header {
+    -Server
+    X-Content-Type-Options nosniff
+    X-Frame-Options DENY
+    Referrer-Policy no-referrer-when-downgrade
+}
