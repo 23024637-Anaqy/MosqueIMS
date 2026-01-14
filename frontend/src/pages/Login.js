@@ -25,11 +25,11 @@ const Login = () => {
 
         <section style={{ background: 'white', borderRadius: 8, padding: 20, boxShadow: '0 6px 24px rgba(2,6,23,0.04)' }}>
           <form onSubmit={handleSubmit} style={{ display: 'grid', gap: 12 }}>
-            <label style={{ fontSize: 13, color: '#374151' }}>Email</label>
-            <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="admin@quantix.com" style={{ padding: 10, borderRadius: 6, border: '1px solid #e5e7eb' }} />
+            <label style={{ fontSize: 13, color: '#374151' }}>User</label>
+            <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="user" style={{ padding: 10, borderRadius: 6, border: '1px solid #e5e7eb' }} />
 
             <label style={{ fontSize: 13, color: '#374151' }}>Password</label>
-            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="admin123" style={{ padding: 10, borderRadius: 6, border: '1px solid #e5e7eb' }} />
+            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="password" style={{ padding: 10, borderRadius: 6, border: '1px solid #e5e7eb' }} />
 
             <div style={{ display: 'flex', gap: 8 }}>
               <button type="submit" disabled={isLoading} style={{ padding: '10px 12px', background: '#065f46', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer' }}>{isLoading ? 'Signing in…' : 'Sign in'}</button>
