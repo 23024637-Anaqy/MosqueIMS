@@ -21,11 +21,12 @@
     "react-router": "^7.6.1",
     "react-router-dom": "^7.6.0",
     "react-scripts": "5.0.1",
+    "serve": "^14.2.5",
     "tailwindcss": "^4.1.7",
     "web-vitals": "^2.1.4"
   },
   "scripts": {
-    "start": "react-scripts start",
+    "start": "serve -s build -l tcp://0.0.0.0:$PORT",
     "build": "CI=false react-scripts build",
     "test": "react-scripts test",
     "eject": "react-scripts eject"
